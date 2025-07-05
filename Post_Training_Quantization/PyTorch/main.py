@@ -4,22 +4,36 @@ import random
 
 import torch
 
-from models import initialize_wrapper
 from quantization import QuantMode, quantize_model
 
 
-def main(model_name, dataset_path, gpu=False):
+def initialize_wrapper(model_name, dataset_path, batch_size, workers):
+    os.environ['DATA_PATH'] = dataset_path
 
-    output_path = os.path.join(os.getcwd(), f"output/model_name")
+    from yolo import UltralyticsModelWrapper
+    model_wrapper = UltralyticsModelWrapper(model_name)
+
+
+    if model_wrapper is None:
+        raise NotImplementedError("Unknown dataset/model combination")
+
+    model_wrapper.load_data(batch_size, workers)
+    model_wrapper.load_model()
+
+    return model_wrapper
+    
+def main(model_path, model_name, dataset_path, gpu=False):
+
+    output_path = os.path.join(os.getcwd(), f"output/{model_name}")
     pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
 
     if gpu is not None:
-        torch.cuda.set_device("cuda")
+        torch.cuda.set_device("cuda:0")
 
-    random.seed(0)
-    torch.manual_seed(0)
+    random.seed(66)
+    torch.manual_seed(66)
 
-    model_wrapper = initialize_wrapper(model_name, os.path.expanduser(dataset_path), 32, 8)
+    model_wrapper = initialize_wrapper(model_path, os.path.expanduser(dataset_path), 32, 8)
 
     # Inference
     print("FLOAT32 Inference")
@@ -67,7 +81,8 @@ def main(model_name, dataset_path, gpu=False):
 
 
 if __name__ == '__main__':
-    model_name = "./models/yolov8n.pt"
-    dataset_path = "../../Data/"
+    model_path = "./Models/best.pt"
+    model_name = "yolovn8"
+    dataset_path = os.path.expanduser("./Data/hpd3/yolov8/")
     gpu=True
-    main(model_name, dataset_path, gpu)
+    main(model_path, model_name, dataset_path, gpu)

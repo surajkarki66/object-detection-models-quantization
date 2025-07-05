@@ -3,7 +3,6 @@ Credit: https://github.com/Yu-Zhewen/fpgaconvnet-torch
 
 """
 
-
 import os
 
 import numpy as np
@@ -12,7 +11,7 @@ import onnx_graphsurgeon as gs
 import torch
 import torch.nn as nn
 
-from models.base import TorchModelWrapper
+from base import TorchModelWrapper
 
 # note: do NOT move ultralytic import to the top, otherwise the edit in settings will not take effect
 
@@ -40,14 +39,13 @@ class UltralyticsModelWrapper(TorchModelWrapper):
     def load_data(self, batch_size, workers):
         from ultralytics import settings
 
-        COCO_PATH = os.environ.get("COCO_PATH", os.path.expanduser("~/dataset/ultralytics/datasets"))
-        assert COCO_PATH.endswith("/datasets"), "dataset path should end with 'datasets'"
+        DATA_PATH = os.environ.get("DATA_PATH")
         # set dataset path
-        settings.update({'datasets_dir': COCO_PATH})
+        settings.update({'datasets_dir': DATA_PATH})
 
         # note: ultralytics automatically handle the dataloaders, only need to set the path
-        self.data_loaders['calibrate'] = "coco128.yaml"
-        self.data_loaders['validate'] = "coco.yaml"
+        self.data_loaders['calibrate'] = os.path.join(DATA_PATH, "data.yaml")
+        self.data_loaders['validate'] = os.path.join(DATA_PATH, "data.yaml")
 
         self.batch_size = batch_size
         self.workers = workers
@@ -63,6 +61,7 @@ class UltralyticsModelWrapper(TorchModelWrapper):
     def onnx_exporter(self, onnx_path):
         path = self.yolo.export(format="onnx", simplify=True, opset=14)
         os.rename(path, onnx_path)
+        
         self.remove_detection_head_v8(onnx_path)
 
         # rename sideband info
@@ -79,48 +78,48 @@ class UltralyticsModelWrapper(TorchModelWrapper):
         graph = onnx.load(onnx_path)
         graph = gs.import_onnx(graph)
 
-        max_idx = 0
-        for idx, node in enumerate(graph.nodes):
-            if node.name == "/model.22/Reshape":
-                reshape_l_idx = idx
-            if node.name == "/model.22/Reshape_1":
-                reshape_m_idx = idx
-            if node.name == "/model.22/Reshape_2":
-                reshape_r_idx = idx
+         # Names of reshape (post-processing) nodes to remove
+        reshapes_to_remove = {
+            "/model.22/Reshape",
+            "/model.22/Reshape_1",
+            "/model.22/Reshape_2"
+        }
 
-        # remove extra operations
-        del graph.nodes[reshape_r_idx:-1]
-        del graph.nodes[reshape_m_idx:]
-        del graph.nodes[reshape_l_idx:]
+        # Remove reshape nodes by filtering
+        graph.nodes = [node for node in graph.nodes if node.name not in reshapes_to_remove]
 
-        # get output layers
-        concat_l = next(filter(lambda x: x.name == "/model.22/Concat", graph.nodes))
-        concat_m = next(filter(lambda x: x.name == "/model.22/Concat_1", graph.nodes))
-        concat_r = next(filter(lambda x: x.name == "/model.22/Concat_2", graph.nodes))
+        # Get Concat nodes
+        concat_names = [
+            "/model.22/Concat",
+            "/model.22/Concat_1",
+            "/model.22/Concat_2"
+        ]
 
-        # get the resize layers
-        resize = next(filter(lambda x: x.name == "/model.10/Resize", graph.nodes))
-        resize.inputs[1] = gs.Constant("roi_0", np.array([0.0,0.0,0.0,0.0]))
-        resize = next(filter(lambda x: x.name == "/model.13/Resize", graph.nodes))
-        resize.inputs[1] = gs.Constant("roi_1", np.array([0.0,0.0,0.0,0.0]))
+        concat_nodes = {}
+        for name in concat_names:
+            node = next((n for n in graph.nodes if n.name == name), None)
+            if node is None:
+                raise ValueError(f"Concat node {name} not found in graph.")
+            concat_nodes[name] = node
 
-        # create the output nodes
-        output_l = gs.Variable("/model.22/Concat_output_0",   shape=concat_l.outputs[0].shape, dtype="float32")
-        output_m = gs.Variable("/model.22/Concat_1_output_0", shape=concat_m.outputs[0].shape, dtype="float32")
-        output_r = gs.Variable("/model.22/Concat_2_output_0", shape=concat_r.outputs[0].shape, dtype="float32")
+        # Update Resize nodes' ROI inputs
+        for resize_name, roi_name in [("/model.10/Resize", "roi_0"), ("/model.13/Resize", "roi_1")]:
+            resize_node = next((n for n in graph.nodes if n.name == resize_name), None)
+            if resize_node is None:
+                raise ValueError(f"Resize node {resize_name} not found.")
+            if len(resize_node.inputs) > 1:
+                resize_node.inputs[1] = gs.Constant(roi_name, np.array([0.0, 0.0, 0.0, 0.0]))
 
-        # connect the output nodes
-        concat_l.outputs = [ output_l ]
-        concat_m.outputs = [ output_m ]
-        concat_r.outputs = [ output_r ]
+        # Create new graph outputs based on concat outputs
+        graph.outputs = []
+        for name, node in concat_nodes.items():
+            output_name = f"{name}_output_0"
+            output_var = gs.Variable(output_name, shape=node.outputs[0].shape, dtype=np.float32)
+            node.outputs = [output_var]
+            graph.outputs.append(output_var)
 
-        # update the graph outputs
-        graph.outputs = [ concat_l.outputs[0], concat_m.outputs[0], concat_r.outputs[0] ]
-
-        # cleanup graph
+        # Clean up graph and export
         graph.cleanup()
-
-        # save the reduced network
-        graph = gs.export_onnx(graph)
-        graph.ir_version = 8 # need to downgrade the ir version
-        onnx.save(graph, onnx_path)
+        onnx_graph = gs.export_onnx(graph)
+        onnx_graph.ir_version = 8  # Downgrade IR version for compatibility
+        onnx.save(onnx_graph, onnx_path)

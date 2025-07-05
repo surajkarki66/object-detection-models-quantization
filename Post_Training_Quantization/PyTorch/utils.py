@@ -17,7 +17,7 @@ def replace_modules(model, replace_dict):
             if submodule in replace_dict.keys():
                 new_submodule = replace_dict[submodule]
                 assert(hasattr(module, subname))
-                setattr(module,subname,new_submodule)
+                setattr(module, subname, new_submodule)
 
 def set_nodeattr(node, attr_name, attr_value):
     print("annotate ", node.name, attr_name, attr_value)
@@ -62,7 +62,7 @@ def _insert_threshold_relu(onnx_model, sideband_info):
         next_node.input[0] = new_node.output[0]
 
 def _annotate_quantization(onnx_model, sideband_info):
-    from ..quantization import QuantMode
+    from quantization import QuantMode
 
     if "quantization" not in sideband_info:
         return
@@ -163,7 +163,7 @@ def generate_onnx_files(self, output_path):
 
     pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
     # export f32 model
-    f32_onnx_path = os.path.join(output_path, f"{self.model_name}_f32.onnx")
+    f32_onnx_path = os.path.join(output_path, f"{os.path.splitext(os.path.basename(self.model_name))[0]}_f32.onnx")
     self.onnx_exporter(f32_onnx_path)
 
     # if model is compressed
@@ -174,7 +174,7 @@ def generate_onnx_files(self, output_path):
         _annotate_quantization(onnx_model, self.sideband_info)
         _annotate_sparsity(onnx_model, self.sideband_info)
         _annotate_encoding(onnx_model, self.sideband_info)
-        fpgaconvnet_onnx_path = os.path.join(output_path, f"{self.model_name}.onnx")
+        fpgaconvnet_onnx_path = os.path.join(output_path, f"{os.path.splitext(os.path.basename(self.model_name))[0]}.onnx")
         onnx.save(onnx_model, fpgaconvnet_onnx_path)
     else:
         fpgaconvnet_onnx_path = f32_onnx_path

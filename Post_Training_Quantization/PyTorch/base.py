@@ -36,13 +36,13 @@ class TorchModelWrapper(nn.Module, ABC):
         random_input = torch.randn(self.input_size)
         if torch.cuda.is_available():
             random_input = random_input.cuda()
-        torch.onnx.export(self, random_input, onnx_path, verbose=False, keep_initializers_as_inputs=True)
+        torch.onnx.export(self, random_input, onnx_path, verbose=True, keep_initializers_as_inputs=True)
 
     def forward(self, x):
         return self.model(x)
 
     def replace_modules(self, replace_dict):
-        from models.utils import replace_modules
+        from utils import replace_modules
         replace_modules(self.model, replace_dict)
 
     def profile(self):
@@ -58,4 +58,4 @@ class TorchModelWrapper(nn.Module, ABC):
 
         print(f"MACs: {macs}, Params: {params}")
 
-    from models.utils import generate_onnx_files
+    from utils import generate_onnx_files
